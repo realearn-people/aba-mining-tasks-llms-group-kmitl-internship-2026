@@ -16,10 +16,7 @@
 #   span_only: {"Topics": {"Room": [{"text": "..."}], ...}}
 #   sentiment_only: {"Topics": {"Room": "Positive"/null, ...}}
 #   full: {"Topics": {"Room": [{"text": "...", "label": "Positive"}], ...}}
-#
-# Run with:
-#   python3 run_task1.py --experiment <name> --n 20
-#   python3 run_task1.py --rules 1,2,5 --n 20   (custom ad-hoc combination)
+
 
 experiments:
 

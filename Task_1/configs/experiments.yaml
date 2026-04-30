@@ -11,6 +11,12 @@
 #   Rule 6: Multi-topic Extraction     → Subtask 1.1 + 1.2
 #   Rule 7: Multiple Spans per Topic   → Subtask 1.2 (span extraction)
 #
+# Output schemas:
+#   topic_only: {"Topics": {"Room": true/false, ...}}
+#   span_only: {"Topics": {"Room": [{"text": "..."}], ...}}
+#   sentiment_only: {"Topics": {"Room": "Positive"/null, ...}}
+#   full: {"Topics": {"Room": [{"text": "...", "label": "Positive"}], ...}}
+#
 # Run with:
 #   python3 run_task1.py --experiment <name> --n 20
 #   python3 run_task1.py --rules 1,2,5 --n 20   (custom ad-hoc combination)
@@ -22,46 +28,62 @@ experiments:
     description: "All 7 rules — Subtasks 1.1 + 1.2 + 1.3 combined"
     rules: [1, 2, 3, 4, 5, 6, 7]
     subtasks: [1.1, 1.2, 1.3]
+    output_schema: full
 
   # ── Single-subtask experiments ──────────────────────────────────────────────
   subtask1_1:
     description: "Subtask 1.1 only — Topic identification (rules 2, 5, 6)"
     rules: [2, 5, 6]
     subtasks: [1.1]
+    output_schema: topic_only
 
   subtask1_2:
     description: "Subtask 1.2 only — Span extraction (rules 1, 7)"
     rules: [1, 7]
     subtasks: [1.2]
+    output_schema: span_only
 
   subtask1_3:
     description: "Subtask 1.3 only — Sentiment classification (rules 3, 4)"
     rules: [3, 4]
     subtasks: [1.3]
+    output_schema: sentiment_only
 
   # ── Two-subtask combinations ────────────────────────────────────────────────
   subtask1_1_and_1_2:
     description: "Subtasks 1.1 + 1.2 — Topic + Span (rules 1, 2, 5, 6, 7)"
     rules: [1, 2, 5, 6, 7]
     subtasks: [1.1, 1.2]
+    output_schema: span_only
 
   subtask1_1_and_1_3:
     description: "Subtasks 1.1 + 1.3 — Topic + Sentiment (rules 2, 3, 4, 5, 6)"
     rules: [2, 3, 4, 5, 6]
     subtasks: [1.1, 1.3]
+    output_schema: sentiment_only
 
   subtask1_2_and_1_3:
     description: "Subtasks 1.2 + 1.3 — Span + Sentiment (rules 1, 3, 4, 7)"
     rules: [1, 3, 4, 7]
     subtasks: [1.2, 1.3]
+    output_schema: full
 
   # ── Partial-rule variants (for ablation) ────────────────────────────────────
   rules_1_2_5:
     description: "Rules 1, 2, 5 only — basic verbatim + topic + null"
     rules: [1, 2, 5]
     subtasks: [1.1, 1.2]
+    output_schema: span_only
 
   rules_3_6:
     description: "Rules 3, 6 only — sentiment + multi-topic"
     rules: [3, 6]
     subtasks: [1.2, 1.3]
+    output_schema: full
+
+  rules_4_7:
+    description: "Rules 4, 7 only — contrastive + multiple spans"
+    rules: [4, 7]
+    subtasks: [1.2, 1.3]
+    output_schema: full
+  

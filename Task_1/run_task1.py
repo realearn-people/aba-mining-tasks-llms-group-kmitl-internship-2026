@@ -13,13 +13,13 @@ from src import run_task1
 from src.prompts import build_modular_prompt
 
 INDIVIDUAL_PROMPTS = [
-    "prompts/task1/generator_v1.txt",
-    "prompts/task1/generator_contrastive1.txt",
-    "prompts/task1/generator_contrastive2.txt",
-    "prompts/task1/generator_contrastive3.txt",
+    "prompts/task1/Contrastive/generator_v1.txt",
+    "prompts/task1/Contrastive/generator_contrastive1.txt",
+    "prompts/task1/Contrastive/generator_contrastive2.txt",
+    "prompts/task1/Contrastive/generator_contrastive3.txt",
 ]
 
-COMBINED_PROMPT = "prompts/task1/generator_combined.txt"
+COMBINED_PROMPT = "prompts/task1/Contrastive/generator_combined.txt"
 
 
 def _load_experiments(repo_root: Path) -> dict:
@@ -105,10 +105,12 @@ Examples:
                 parser.error(f"Unknown experiment '{args.experiment}'. Available: {available}")
             exp = experiments[args.experiment]
             rule_list = [int(r) for r in exp["rules"]]
+            output_schema = exp.get("output_schema", "full")
             exp_label = args.experiment
             description = exp.get("description", "")
         else:
             rule_list = [int(r.strip()) for r in args.rules.split(",")]
+            output_schema = "full"  # Default for ad-hoc rules
             exp_label = f"rules_{'_'.join(str(r) for r in rule_list)}"
             description = f"Ad-hoc rules: {rule_list}"
 
@@ -116,10 +118,11 @@ Examples:
         print(f"MODE: modular  |  model: {model_cfg.task1_model}")
         print(f"Experiment : {exp_label}")
         print(f"Rules      : {rule_list}")
+        print(f"Output schema: {output_schema}")
         print(f"Description: {description}")
         print("=" * 60)
 
-        prompt_template = build_modular_prompt(repo_root, rule_list)
+        prompt_template = build_modular_prompt(repo_root, rule_list, output_schema)
 
         out_path = run_task1(
             repo_root=repo_root,
@@ -131,6 +134,7 @@ Examples:
             prompt_template=prompt_template,
             output_subdir=f"{model_folder}/modular/{exp_label}",
             output_label=exp_label,
+            output_schema=output_schema,
         )
         print(f"Wrote: {out_path}")
 

@@ -15,7 +15,7 @@ STEP-BY-STEP PROCESS:
 8. If a review field contains only a filler phrase such as "Nothing at all", "nothing", "Not applicable", "N/A", or "none" with no hotel-specific content, extract that phrase under the "Off" topic with a null label — it is a meta-comment, not a hotel-aspect opinion.
 9. Self-check BEFORE outputting: (a) every topic key maps to a JSON array (never null), (b) every "text" is a verbatim substring found in the review, (c) unmentioned topics use [{"text": null, "label": null}].
 
-⚠ CRITICAL FORMAT:
+CRITICAL FORMAT:
   NEVER: "Food": null                                            (bare null is always wrong)
   ALWAYS: "Food": [{"text": null, "label": null}]               (unmentioned topic)
   ALWAYS: "Food": [{"text": "Breakfast was great.", "label": "Positive"}]  (mentioned topic)

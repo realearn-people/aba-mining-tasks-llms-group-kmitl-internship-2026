@@ -15,7 +15,7 @@ def render_prompt(template: str, **kwargs: str) -> str:
     return out
 
 
-def build_modular_prompt(repo_root: Path, rules: list[int]) -> str:
+def build_modular_prompt(repo_root: Path, rules: list[int], output_schema: str = "full") -> str:
     """Assemble a prompt from header + selected rule files + footer.
 
     The assembled string still contains {{TOPICS}}, {{TOPIC_COUNT}}, and
@@ -25,10 +25,20 @@ def build_modular_prompt(repo_root: Path, rules: list[int]) -> str:
     Args:
         repo_root: Absolute path to the ABA_Mining directory.
         rules: Ordered list of rule numbers to include, e.g. [1, 2, 5].
+        output_schema: Output format type: "topic_only", "span_only", "sentiment_only", or "full".
     """
-    rules_dir = repo_root / "prompts" / "task1" / "rules"
-    header = (repo_root / "prompts" / "task1" / "header.txt").read_text(encoding="utf-8")
-    footer = (repo_root / "prompts" / "task1" / "footer.txt").read_text(encoding="utf-8")
+    prompts_dir = repo_root / "prompts" / "task1"
+    rules_dir = prompts_dir / "rules"
+
+    _schema_files = {
+        "topic_only":     ("header_topic_only.txt",     "footer_topic_only.txt"),
+        "span_only":      ("header_span_only.txt",      "footer_span_only.txt"),
+        "sentiment_only": ("header_sentiment_only.txt", "footer_sentiment_only.txt"),
+        "full":           ("header.txt",                "footer.txt"),
+    }
+    header_file, footer_file = _schema_files.get(output_schema, ("header.txt", "footer.txt"))
+    header = (prompts_dir / header_file).read_text(encoding="utf-8")
+    footer = (prompts_dir / footer_file).read_text(encoding="utf-8")
 
     rule_blocks: list[str] = []
     for r in rules:

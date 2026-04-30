@@ -17,3 +17,19 @@ Correct — Staff: [{"text": "Maria at reception is just great she really took t
 Correct — Because both spans mention Staff and both are listed as separate items in the same array.
 Wrong — Staff: [{"text": "Maria at reception is just great she really took time to explain where to go how to get there and so helpful ... 🙏", "label": "Positive"}]
 Wrong — Because the span about Richard was ignored. All relevant spans for a topic must be extracted, not just the first one.
+
+Review:
+PositiveReview — "Location is excellent — just a 5-minute walk to the beach. Also very convenient for the night market, which is only one street away."
+NegativeReview — ""
+Correct — Location: [{"text": "just a 5-minute walk to the beach.", "label": "Positive"}, {"text": "very convenient for the night market, which is only one street away.", "label": "Positive"}]
+Correct — Because the review mentions Location twice (beach proximity AND night market proximity) and both must be extracted as separate items.
+Wrong — Location: [{"text": "just a 5-minute walk to the beach.", "label": "Positive"}]
+Wrong — Because the second location span (night market) was omitted. Never stop at the first mention — extract every span that belongs to the topic.
+
+Review:
+PositiveReview — "Breakfast was wonderful — fresh fruit, eggs any style, and great coffee."
+NegativeReview — "We ordered room service for dinner and the food arrived cold and took over an hour."
+Correct — Food: [{"text": "Breakfast was wonderful — fresh fruit, eggs any style, and great coffee.", "label": "Positive"}, {"text": "the food arrived cold and took over an hour.", "label": "Negative"}]
+Correct — Because Food is mentioned twice — once positively (breakfast) and once negatively (room service). Both spans must appear in the array.
+Wrong — Food: [{"text": "Breakfast was wonderful — fresh fruit, eggs any style, and great coffee.", "label": "Positive"}]
+Wrong — Because the room service complaint was dropped. A topic can have multiple spans even when they have different sentiments — include them all.

@@ -21,56 +21,136 @@ class Task1Instance:
     review_text: str
 
 
-def build_task1_schema(topics: list[str]) -> dict[str, Any]:
-    topic_obj = {
-        "type": "object",
-        "properties": {"text": {"type": ["string", "null"]}, "label": {"type": ["string", "null"]}},
-        "required": ["text", "label"],
-        "additionalProperties": False,
-    }
-    return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "properties": {
-            "Topics": {
-                "type": "object",
-                "properties": {t: {"type": "array", "items": topic_obj, "minItems": 1} for t in topics},
-                "required": topics,
-                "additionalProperties": False,
-            }
-        },
-        "required": ["Topics"],
-        "additionalProperties": False,
-    }
+def build_task1_schema(topics: list[str], output_schema: str = "full") -> dict[str, Any]:
+    """Build JSON schema validator based on output schema type.
+
+    Args:
+        topics: List of topic names
+        output_schema: One of "topic_only", "span_only", "sentiment_only", "full"
+    """
+    if output_schema == "topic_only":
+        # {"Topics": {"Room": true/false, ...}}
+        return {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+                "Topics": {
+                    "type": "object",
+                    "properties": {t: {"type": "boolean"} for t in topics},
+                    "required": topics,
+                    "additionalProperties": False,
+                }
+            },
+            "required": ["Topics"],
+            "additionalProperties": False,
+        }
+    elif output_schema == "span_only":
+        # {"Topics": {"Room": [{"text": "..."}], ...}}
+        topic_obj = {
+            "type": "object",
+            "properties": {"text": {"type": ["string", "null"]}},
+            "required": ["text"],
+            "additionalProperties": False,
+        }
+        return {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+                "Topics": {
+                    "type": "object",
+                    "properties": {t: {"type": "array", "items": topic_obj, "minItems": 1} for t in topics},
+                    "required": topics,
+                    "additionalProperties": False,
+                }
+            },
+            "required": ["Topics"],
+            "additionalProperties": False,
+        }
+    elif output_schema == "sentiment_only":
+        # {"Topics": {"Room": "Positive"/"Negative"/null, ...}}
+        return {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+                "Topics": {
+                    "type": "object",
+                    "properties": {t: {"type": ["string", "null"]} for t in topics},
+                    "required": topics,
+                    "additionalProperties": False,
+                }
+            },
+            "required": ["Topics"],
+            "additionalProperties": False,
+        }
+    else:  # full
+        # {"Topics": {"Room": [{"text": "...", "label": "Positive"}], ...}}
+        topic_obj = {
+            "type": "object",
+            "properties": {"text": {"type": ["string", "null"]}, "label": {"type": ["string", "null"]}},
+            "required": ["text", "label"],
+            "additionalProperties": False,
+        }
+        return {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+                "Topics": {
+                    "type": "object",
+                    "properties": {t: {"type": "array", "items": topic_obj, "minItems": 1} for t in topics},
+                    "required": topics,
+                    "additionalProperties": False,
+                }
+            },
+            "required": ["Topics"],
+            "additionalProperties": False,
+        }
 
 # checking if the above function is correct
-def local_validate_task1(parsed: Any, *, topics: list[str], review_text: str) -> list[str]:
+def local_validate_task1(parsed: Any, *, topics: list[str], review_text: str, output_schema: str = "full") -> list[str]:
     errors: list[str] = []
-    validator = Draft202012Validator(build_task1_schema(topics))
+    validator = Draft202012Validator(build_task1_schema(topics, output_schema))
     for e in validator.iter_errors(parsed):
         errors.append(e.message)
 
     if errors:
         return errors
 
-    # Check all topics are present (even empty)
-    # Extra semantic constraints.
-    for t in topics:
-        items = parsed["Topics"][t]
-        # Check text/label consistency: if text is null/empty, label must be null; if text is non-empty, label must be Positive/Negative
-        for it in items:
-            text = it["text"]
-            label = it["label"]
-            if text is None:
-                if label is not None:
-                    errors.append(f"{t}: label must be null when text is null")
-            else:
-                # Check is non-empty after stripping whitespace
-                if label not in ("Positive", "Negative"):
-                    errors.append(f"{t}: label must be Positive/Negative when text is non-null")
-                # Check text span is actually present in review_text (verbatim match)
-                if text not in review_text:
+    # Schema-specific semantic validation
+    if output_schema == "topic_only":
+        # {"Topics": {"Room": true/false, ...}}
+        for t in topics:
+            val = parsed["Topics"][t]
+            if not isinstance(val, bool):
+                errors.append(f"{t}: value must be boolean")
+    elif output_schema == "span_only":
+        # {"Topics": {"Room": [{"text": "..."}], ...}}
+        for t in topics:
+            items = parsed["Topics"][t]
+            for it in items:
+                text = it["text"]
+                if text is not None and text not in review_text:
                     errors.append(f"{t}: text span not found verbatim in review_text")
+    elif output_schema == "sentiment_only":
+        # {"Topics": {"Room": "Positive"/"Negative"/null, ...}}
+        for t in topics:
+            val = parsed["Topics"][t]
+            if val is not None and val not in ("Positive", "Negative"):
+                errors.append(f"{t}: label must be 'Positive', 'Negative', or null")
+    else:  # full
+        # {"Topics": {"Room": [{"text": "...", "label": "Positive"}], ...}}
+        for t in topics:
+            items = parsed["Topics"][t]
+            for it in items:
+                text = it["text"]
+                label = it["label"]
+                if text is None:
+                    if label is not None:
+                        errors.append(f"{t}: label must be null when text is null")
+                else:
+                    if label not in ("Positive", "Negative"):
+                        errors.append(f"{t}: label must be Positive/Negative when text is non-null")
+                    if text not in review_text:
+                        errors.append(f"{t}: text span not found verbatim in review_text")
     return errors
 
 
@@ -99,6 +179,51 @@ def load_task1_instances_from_input(paths: PathsConfig, limit_reviews: int | Non
     return instances
 
 
+def _transform_to_schema(parsed: dict[str, Any], output_schema: str, topics: list[str]) -> dict[str, Any]:
+    """Transform model output from full format to the target output schema."""
+    if output_schema == "full":
+        return parsed  # No transformation needed
+
+    topics_dict = parsed.get("Topics", {})
+    new_topics = {}
+
+    if output_schema == "topic_only":
+        # {"Topics": {"Room": true/false, ...}}
+        for topic in topics:
+            spans = topics_dict.get(topic, [])
+            if isinstance(spans, list) and len(spans) > 0:
+                # Topic is present if there are non-null spans
+                new_topics[topic] = any(s.get("text") is not None for s in spans)
+            else:
+                new_topics[topic] = False
+        return {"Topics": new_topics}
+
+    elif output_schema == "span_only":
+        # {"Topics": {"Room": [{"text": "..."}], ...}}
+        for topic in topics:
+            spans = topics_dict.get(topic, [])
+            if isinstance(spans, list):
+                new_spans = [{"text": s.get("text")} for s in spans]
+                new_topics[topic] = new_spans
+            else:
+                new_topics[topic] = [{"text": None}]
+        return {"Topics": new_topics}
+
+    elif output_schema == "sentiment_only":
+        # {"Topics": {"Room": "Positive"/"Negative"/null, ...}}
+        for topic in topics:
+            spans = topics_dict.get(topic, [])
+            if isinstance(spans, list) and len(spans) > 0:
+                # Take the first non-null sentiment (or null if all are null)
+                labels = [s.get("label") for s in spans if s.get("text") is not None]
+                new_topics[topic] = labels[0] if labels else None
+            else:
+                new_topics[topic] = None
+        return {"Topics": new_topics}
+
+    return parsed
+
+
 def run_task1(
     *,
     repo_root: Path,
@@ -108,10 +233,11 @@ def run_task1(
     paths_cfg: PathsConfig,
     limit_reviews: int = 20,
     offset_reviews: int = 0,
-    prompt_path: str | None = "prompts/task1/generator_v1.txt",
+    prompt_path: str | None = "prompts/task1/Contrastive/generator_v1.txt",
     prompt_template: str | None = None,
     output_label: str | None = None,
-    validator_path: str = "prompts/task1/validator_v1.txt",
+    output_schema: str = "full",
+    validator_path: str = "prompts/task1/Contrastive/validator_v1.txt",
     max_retries: int = 2,
     output_subdir: str | None = None,
 ) -> Path:
@@ -155,11 +281,14 @@ def run_task1(
         if not ok:
             errors = [f"json_parse_error: {err}"]
         else:
-            errors = local_validate_task1(parsed, topics=topics_cfg.topics, review_text=inst.review_text)
+            errors = local_validate_task1(parsed, topics=topics_cfg.topics, review_text=inst.review_text, output_schema=output_schema)
         return resp.text, ok, parsed, errors
 
     def _validate_and_fix(inst: Task1Instance, candidate_json: str, errors: list[str]) -> tuple[str, bool, Any, list[str]]:
-        """Send the candidate + errors to the validator LLM for correction."""
+        """Send the candidate + errors to the validator LLM for correction.
+        Only used for 'full' schema — the validator prompt expects {text, label} format."""
+        if output_schema != "full":
+            return candidate_json, False, None, errors  # skip validator for non-full schemas
         prompt = render_prompt(
             val_template,
             TOPICS=topics_str,
@@ -179,7 +308,7 @@ def run_task1(
         if not ok:
             new_errors = [f"json_parse_error: {err}"]
         else:
-            new_errors = local_validate_task1(parsed, topics=topics_cfg.topics, review_text=inst.review_text)
+            new_errors = local_validate_task1(parsed, topics=topics_cfg.topics, review_text=inst.review_text, output_schema=output_schema)
         return resp.text, ok, parsed, new_errors
 
     def _process_one(inst: Task1Instance) -> dict[str, Any]:
@@ -198,7 +327,7 @@ def run_task1(
                 raw, ok, parsed, errors = val_raw, val_ok, val_parsed, val_errors
                 break
             else:
-                # Validator 
+                # Validator didn't help
                 break
 
         # If we have a valid parse, compact the raw_output to remove newlines/indentation
@@ -207,6 +336,7 @@ def run_task1(
         return {
             "review_id": inst.review_id,
             "schema": topics_cfg.active_schema,
+            "output_schema": output_schema,
             "prompt": prompt_path,
             "raw_output": compact_raw,
             "parsed": parsed if ok else None,
@@ -229,46 +359,98 @@ def run_task1(
         for r in results:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
-    # Write cvs
     csv_path = out_path.with_suffix(".csv")
-    _write_readable_csv(csv_path, results, instances)
+    _write_readable_csv(csv_path, results, instances, output_schema=output_schema)
 
     return out_path
 
 
-def _write_readable_csv(csv_path: Path, results: list[dict[str, Any]], instances: list[Task1Instance]) -> None:
-    """Write a human-readable CSV with one row per (review, topic, span). Only shows topics with actual content."""
+def _write_readable_csv(csv_path: Path, results: list[dict[str, Any]], instances: list[Task1Instance], output_schema: str = "full") -> None:
+    """Write a human-readable CSV with output appropriate to the schema type."""
     import csv as csv_mod
 
     inst_map = {inst.review_id: inst.review_text for inst in instances}
 
     with csv_path.open("w", encoding="utf-8", newline="") as f:
         writer = csv_mod.writer(f)
-        writer.writerow(["Review ID", "Valid", "Topic", "Selected Content", "Sentiment", "Errors"])
 
-        for r in results:
-            review_id = r["review_id"]
-            valid = r["valid"]
-            errors = "; ".join(r.get("errors", []))
-
-            parsed = r.get("parsed")
-            if parsed and "Topics" in parsed:
-                found_any = False
-                for topic, spans in parsed["Topics"].items():
-                    if not isinstance(spans, list):
-                        continue
-                    for span in spans:
-                        if span is None or not isinstance(span, dict):
+        if output_schema == "topic_only":
+            writer.writerow(["Review ID", "Valid", "Topics Present", "Errors"])
+            for r in results:
+                review_id = r["review_id"]
+                valid = r["valid"]
+                errors = "; ".join(r.get("errors", []))
+                parsed = r.get("parsed")
+                if parsed and "Topics" in parsed:
+                    present = [t for t, v in parsed["Topics"].items() if v]
+                    topics_str = ", ".join(present) if present else "(none)"
+                    writer.writerow([review_id, valid, topics_str, errors])
+                else:
+                    writer.writerow([review_id, valid, "(parse failed)", errors])
+        elif output_schema == "span_only":
+            writer.writerow(["Review ID", "Valid", "Topic", "Text Span", "Errors"])
+            for r in results:
+                review_id = r["review_id"]
+                valid = r["valid"]
+                errors = "; ".join(r.get("errors", []))
+                parsed = r.get("parsed")
+                if parsed and "Topics" in parsed:
+                    found_any = False
+                    for topic, spans in parsed["Topics"].items():
+                        if not isinstance(spans, list):
                             continue
-                        text = span.get("text")
-                        label = span.get("label")
-                        # Skip topics with null text
-                        if not text or text == "null":
+                        for span in spans:
+                            if span is None or not isinstance(span, dict):
+                                continue
+                            text = span.get("text")
+                            if not text or text == "null":
+                                continue
+                            found_any = True
+                            writer.writerow([review_id, valid, topic, text, ""])
+                    if not found_any:
+                        writer.writerow([review_id, valid, "(no spans found)", "", errors])
+                else:
+                    writer.writerow([review_id, valid, "(parse failed)", "", errors])
+        elif output_schema == "sentiment_only":
+            writer.writerow(["Review ID", "Valid", "Topic", "Sentiment", "Errors"])
+            for r in results:
+                review_id = r["review_id"]
+                valid = r["valid"]
+                errors = "; ".join(r.get("errors", []))
+                parsed = r.get("parsed")
+                if parsed and "Topics" in parsed:
+                    found_any = False
+                    for topic, label in parsed["Topics"].items():
+                        if label is not None:
+                            found_any = True
+                            writer.writerow([review_id, valid, topic, label, ""])
+                    if not found_any:
+                        writer.writerow([review_id, valid, "(no sentiments found)", "", errors])
+                else:
+                    writer.writerow([review_id, valid, "(parse failed)", "", errors])
+        else:  # full
+            writer.writerow(["Review ID", "Valid", "Topic", "Text Span", "Sentiment", "Errors"])
+            for r in results:
+                review_id = r["review_id"]
+                valid = r["valid"]
+                errors = "; ".join(r.get("errors", []))
+                parsed = r.get("parsed")
+                if parsed and "Topics" in parsed:
+                    found_any = False
+                    for topic, spans in parsed["Topics"].items():
+                        if not isinstance(spans, list):
                             continue
-                        found_any = True
-                        writer.writerow([review_id, valid, topic, text, label or "", ""])
-                if not found_any:
-                    writer.writerow([review_id, valid, "(no topics found)", "", "", errors])
-            else:
-                writer.writerow([review_id, valid, "(parse failed)", "", "", errors])
+                        for span in spans:
+                            if span is None or not isinstance(span, dict):
+                                continue
+                            text = span.get("text")
+                            label = span.get("label")
+                            if not text or text == "null":
+                                continue
+                            found_any = True
+                            writer.writerow([review_id, valid, topic, text, label or "", ""])
+                    if not found_any:
+                        writer.writerow([review_id, valid, "(no topics found)", "", "", errors])
+                else:
+                    writer.writerow([review_id, valid, "(parse failed)", "", "", errors])
 

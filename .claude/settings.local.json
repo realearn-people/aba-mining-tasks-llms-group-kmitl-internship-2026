@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ollama list *)",
+      "Bash(python run_task1.py --experiment combined --model llama3.2 --n 20)",
+      "Bash(python -c \"from src import load_paths_config, load_model_config, load_topics_config; from pathlib import Path; root=Path\\('.'\\).resolve\\(\\); p=load_paths_config\\(root\\); print\\('input_csv exists:', p.input_csv.exists\\(\\)\\); print\\('path:', p.input_csv\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python -)",
+      "Bash(python run_task1.py --experiment combined)"
+    ]
+  }
+}

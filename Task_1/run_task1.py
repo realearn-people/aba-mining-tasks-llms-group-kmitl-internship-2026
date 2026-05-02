@@ -66,6 +66,9 @@ Examples:
         help="Modular mode (ad-hoc): comma-separated rule numbers, e.g. '1,2,5'.",
     )
     parser.add_argument("--n", type=int, default=20, help="Number of reviews to process (default: 20)")
+    parser.add_argument("--offset", type=int, default=0, help="Skip the first N reviews (for different data samples). offset=0→sample_A, offset=20→sample_B, offset=40→sample_C")
+    parser.add_argument("--sample", default=None, help="Sample label for folder naming, e.g. A, B, C (auto-derived from offset if not set)")
+    parser.add_argument("--run", type=int, default=None, help="Run number for folder naming, e.g. 1, 2, 3")
     parser.add_argument(
         "--model",
         default=None,
@@ -96,6 +99,26 @@ Examples:
 
     model_folder = model_cfg.task1_model.replace(":", "_").replace("/", "_").replace("-", "_")
 
+    # ── Derive sample/run labels for folder naming ────────────────────────────
+    # sample label: A=offset 0, B=offset 20, C=offset 40, or explicit --sample
+    if args.sample:
+        sample_label = args.sample.upper()
+    else:
+        # Auto-derive from offset: 0→A, 20→B, 40→C, 60→D …
+        idx = args.offset // args.n if args.n > 0 else 0
+        sample_label = chr(ord("A") + idx) if idx < 26 else f"S{idx}"
+    run_label = f"run{args.run}" if args.run else None
+
+    def _make_subdir(base_exp_label: str) -> str:
+        """Build output subdir: experiment/sample_X_runY or experiment/ if no run info."""
+        sub = f"{model_folder}/modular/{base_exp_label}"
+        if args.run or args.offset:
+            folder = f"sample_{sample_label}"
+            if run_label:
+                folder += f"_{run_label}"
+            sub += f"/{folder}"
+        return sub
+
     # ── MODULAR MODE ─────────────────────────────────────────────────────────
     if modular:
         if args.experiment:
@@ -120,6 +143,9 @@ Examples:
         print(f"Rules      : {rule_list}")
         print(f"Output schema: {output_schema}")
         print(f"Description: {description}")
+        print(f"Sample     : {sample_label}  (offset={args.offset})")
+        if run_label:
+            print(f"Run        : {run_label}")
         print("=" * 60)
 
         prompt_template = build_modular_prompt(repo_root, rule_list, output_schema)
@@ -131,8 +157,9 @@ Examples:
             model_cfg=model_cfg,
             paths_cfg=paths_cfg,
             limit_reviews=args.n,
+            offset_reviews=args.offset,
             prompt_template=prompt_template,
-            output_subdir=f"{model_folder}/modular/{exp_label}",
+            output_subdir=_make_subdir(exp_label),
             output_label=exp_label,
             output_schema=output_schema,
         )

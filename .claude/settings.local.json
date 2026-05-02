@@ -6,7 +6,29 @@
       "Bash(python -c \"from src import load_paths_config, load_model_config, load_topics_config; from pathlib import Path; root=Path\\('.'\\).resolve\\(\\); p=load_paths_config\\(root\\); print\\('input_csv exists:', p.input_csv.exists\\(\\)\\); print\\('path:', p.input_csv\\)\")",
       "Bash(python -c ' *)",
       "Bash(python -)",
-      "Bash(python run_task1.py --experiment combined)"
+      "Bash(python run_task1.py --experiment combined)",
+      "Bash(python3 -m json.tool)",
+      "Bash(python3 -c \"import json,sys; d=json.loads\\(sys.stdin.read\\(\\)\\); print\\(json.dumps\\({k:v for k,v in d.items\\(\\) if k!='raw_output'}, indent=2\\)\\)\")",
+      "Bash(curl -s http://localhost:11434/api/tags)",
+      "Bash(python3 -c \"import json,sys; data=json.load\\(sys.stdin\\); [print\\(m['name']\\) for m in data.get\\('models',[]\\)]\")",
+      "Bash(chmod +x /Users/realearn/Desktop/Realearn/2026/Patcharakorn_KMITL/ABA_mining/run_all_experiments.sh)",
+      "Bash(.venv/bin/pip install *)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(../.venv/bin/python run_task1.py --experiment rule2_only --model \"llama4:scout\" --n 3)",
+      "Bash(.venv/bin/python -c \"import streamlit, plotly; print\\('ok'\\)\")",
+      "Bash(.venv/bin/streamlit run *)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(curl -s http://localhost:8501)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8501)",
+      "Bash(./run_all_experiments.sh --n 20)",
+      "Bash(chmod +x /Users/realearn/Desktop/Realearn/2026/Patcharakorn_KMITL/ABA_mining/run_experiments_3x.sh)",
+      "Bash(../.venv/bin/python run_task1.py --experiment rule2_only --model \"llama4:scout\" --n 3 --offset 0 --sample A --run 1)",
+      "Bash(./run_experiments_3x.sh --n 20)",
+      "Bash(bash /Users/realearn/Desktop/Realearn/2026/Patcharakorn_KMITL/ABA_mining/run_experiments_3x.sh --n 20)",
+      "Bash(bash /Users/realearn/Desktop/Realearn/2026/Patcharakorn_KMITL/ABA_mining/run_experiments_3x.sh --n 2 --samples A --runs 1)",
+      "Bash(kill -STOP 77807 90077)",
+      "Bash(awk '{print $8, $11}')",
+      "Bash(kill -CONT 77807 90077)"
     ]
   }
 }

@@ -364,7 +364,7 @@ def run_task1(
     )
     if processed_run_keys:
         print(f"Resuming: {len(processed_run_keys)} runs already done, {total_to_do} remaining")
-    print(f"Total runs to process: {total_to_do} ({len(instances)} IDs × {runs_per_id} runs each)")
+    print(f"Total runs to process: {total_to_do} ({len(instances)} IDs x {runs_per_id} runs each)")
 
     # Process one ID at a time, runs_per_id times each; append immediately so progress is never lost
     with out_path.open("a", encoding="utf-8") as f, tqdm(total=total_to_do, desc="Task1") as pbar:

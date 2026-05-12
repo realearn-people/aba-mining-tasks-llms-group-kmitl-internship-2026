@@ -28,7 +28,10 @@
       "Bash(bash /Users/realearn/Desktop/Realearn/2026/Patcharakorn_KMITL/ABA_mining/run_experiments_3x.sh --n 2 --samples A --runs 1)",
       "Bash(kill -STOP 77807 90077)",
       "Bash(awk '{print $8, $11}')",
-      "Bash(kill -CONT 77807 90077)"
+      "Bash(kill -CONT 77807 90077)",
+      "Bash(python3 -m py_compile src/task1.py)",
+      "Bash(python3 -m py_compile run_task1.py)",
+      "Bash(python3 -m py_compile run_task1.py src/prompts.py src/task1.py)"
     ]
   }
 }

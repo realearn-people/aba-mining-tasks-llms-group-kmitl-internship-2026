@@ -154,8 +154,8 @@ def local_validate_task1(parsed: Any, *, topics: list[str], review_text: str, ou
     return errors
 
 
-def load_task1_instances_from_input(paths: PathsConfig, limit_reviews: int | None = None, offset_reviews: int = 0) -> list[Task1Instance]:
-    """Load reviews from the input CSV (A-1 dataset)."""
+def load_task1_instances_from_input(paths: PathsConfig, limit_reviews: int | None = None) -> list[Task1Instance]:
+    """Load reviews from the input CSV. limit_reviews=None loads the whole dataset."""
     df = pd.read_csv(paths.input_csv, dtype=str, keep_default_na=False)
     id_col = "Column1" if "Column1" in df.columns else "ID"
     if id_col not in df.columns:
@@ -163,11 +163,7 @@ def load_task1_instances_from_input(paths: PathsConfig, limit_reviews: int | Non
 
     grouped = df.groupby(id_col, sort=False, dropna=False)
     instances: list[Task1Instance] = []
-    skipped = 0
     for review_id, g in grouped:
-        if skipped < offset_reviews:
-            skipped += 1
-            continue
         pos = (g["PositiveReview"].iloc[0] if "PositiveReview" in g.columns else "") or ""
         neg = (g["NegativeReview"].iloc[0] if "NegativeReview" in g.columns else "") or ""
         review_text = f'PositiveReview — "{pos.strip()}"\nNegativeReview — "{neg.strip()}"'
@@ -231,9 +227,8 @@ def run_task1(
     topics_cfg: TopicsConfig,
     model_cfg: ModelConfig,
     paths_cfg: PathsConfig,
-    limit_reviews: int = 20,
-    offset_reviews: int = 0,
-    prompt_path: str | None = "prompts/task1/Contrastive/generator_v1.txt",
+    limit_reviews: int | None = None,
+    prompt_path: str | None = None,
     prompt_template: str | None = None,
     output_label: str | None = None,
     output_schema: str = "full",
@@ -247,7 +242,7 @@ def run_task1(
     out_dir.mkdir(parents=True, exist_ok=True)
     model_name = model_cfg.task1_model.replace(":", "_").replace("/", "_")
     prompt_label = output_label or (Path(prompt_path).stem if prompt_path else "custom")
-    out_path = out_dir / f"task1_{model_name}_{topics_cfg.active_schema}_{prompt_label}_n{limit_reviews}.jsonl"
+    out_path = out_dir / f"task1_{model_name}_{topics_cfg.active_schema}_{prompt_label}.jsonl"
 
     if prompt_template is None:
         if prompt_path is None:
@@ -259,7 +254,7 @@ def run_task1(
     topics_str = ", ".join(topics_cfg.topics)
     topic_count = str(len(topics_cfg.topics))
 
-    instances = load_task1_instances_from_input(paths_cfg, limit_reviews=limit_reviews, offset_reviews=offset_reviews)
+    instances = load_task1_instances_from_input(paths_cfg, limit_reviews=limit_reviews)
 
     def _generate(inst: Task1Instance) -> tuple[str, bool, Any, list[str]]:
         """Run the generator and return (raw_text, ok, parsed, errors)."""
@@ -345,22 +340,49 @@ def run_task1(
             "retries": attempt,
         }
 
-    # Parallelism for local serving throughput
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    # Checkpoint: collect already-processed review IDs from existing output file
+    processed_ids: set[str] = set()
+    if out_path.exists():
+        with out_path.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    if "review_id" in rec:
+                        processed_ids.add(str(rec["review_id"]))
+                except json.JSONDecodeError:
+                    pass
 
-    results: list[dict[str, Any]] = [None] * len(instances) 
-    with ThreadPoolExecutor(max_workers=model_cfg.num_workers) as ex:
-        fut_to_idx = {ex.submit(_process_one, inst): i for i, inst in enumerate(instances)}
-        for fut in tqdm(as_completed(fut_to_idx), total=len(instances), desc="Task1"):
-            i = fut_to_idx[fut]
-            results[i] = fut.result()
+    remaining = [inst for inst in instances if inst.review_id not in processed_ids]
+    if processed_ids:
+        print(f"Resuming: {len(processed_ids)} already done, {len(remaining)} remaining")
+    print(f"Total to process: {len(remaining)} IDs")
 
-    with out_path.open("w", encoding="utf-8") as f:
-        for r in results:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    # Process one ID at a time; append each result immediately so progress is never lost
+    with out_path.open("a", encoding="utf-8") as f:
+        for inst in tqdm(remaining, desc="Task1"):
+            result = _process_one(inst)
+            f.write(json.dumps(result, ensure_ascii=False) + "\n")
+            f.flush()
+
+    # Read all results (existing + new) in original dataset order, then write CSV
+    id_order = {inst.review_id: i for i, inst in enumerate(instances)}
+    all_results: list[dict[str, Any]] = []
+    with out_path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                all_results.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    all_results.sort(key=lambda r: id_order.get(str(r.get("review_id", "")), 999999))
 
     csv_path = out_path.with_suffix(".csv")
-    _write_readable_csv(csv_path, results, instances, output_schema=output_schema)
+    _write_readable_csv(csv_path, all_results, instances, output_schema=output_schema)
 
     return out_path
 

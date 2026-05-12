@@ -16,17 +16,7 @@ def render_prompt(template: str, **kwargs: str) -> str:
 
 
 def build_modular_prompt(repo_root: Path, rules: list[int], output_schema: str = "full") -> str:
-    """Assemble a prompt from header + selected rule files + footer.
-
-    The assembled string still contains {{TOPICS}}, {{TOPIC_COUNT}}, and
-    {{REVIEW_TEXT}} placeholders — call render_prompt() on the result before
-    sending to the model.
-
-    Args:
-        repo_root: Absolute path to the ABA_Mining directory.
-        rules: Ordered list of rule numbers to include, e.g. [1, 2, 5].
-        output_schema: Output format type: "topic_only", "span_only", "sentiment_only", or "full".
-    """
+    """Assemble a prompt from header + selected rule files + footer."""
     prompts_dir = repo_root / "prompts" / "task1"
     rules_dir = prompts_dir / "rules"
 

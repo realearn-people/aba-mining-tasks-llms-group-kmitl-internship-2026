@@ -235,6 +235,7 @@ def run_task1(
     validator_path: str = "prompts/task1/Contrastive/validator_v1.txt",
     max_retries: int = 2,
     output_subdir: str | None = None,
+    runs_per_id: int = 3,
 ) -> Path:
     out_dir = paths_cfg.task1_dir
     if output_subdir:
@@ -340,8 +341,8 @@ def run_task1(
             "retries": attempt,
         }
 
-    # Checkpoint: collect already-processed review IDs from existing output file
-    processed_ids: set[str] = set()
+    # Checkpoint: collect already-processed (review_id, run_index) pairs
+    processed_run_keys: set[tuple[str, int]] = set()
     if out_path.exists():
         with out_path.open(encoding="utf-8") as f:
             for line in f:
@@ -351,23 +352,33 @@ def run_task1(
                 try:
                     rec = json.loads(line)
                     if "review_id" in rec:
-                        processed_ids.add(str(rec["review_id"]))
+                        ri = int(rec.get("run_index", 1))
+                        processed_run_keys.add((str(rec["review_id"]), ri))
                 except json.JSONDecodeError:
                     pass
 
-    remaining = [inst for inst in instances if inst.review_id not in processed_ids]
-    if processed_ids:
-        print(f"Resuming: {len(processed_ids)} already done, {len(remaining)} remaining")
-    print(f"Total to process: {len(remaining)} IDs")
+    total_to_do = sum(
+        1 for inst in instances
+        for ri in range(1, runs_per_id + 1)
+        if (inst.review_id, ri) not in processed_run_keys
+    )
+    if processed_run_keys:
+        print(f"Resuming: {len(processed_run_keys)} runs already done, {total_to_do} remaining")
+    print(f"Total runs to process: {total_to_do} ({len(instances)} IDs × {runs_per_id} runs each)")
 
-    # Process one ID at a time; append each result immediately so progress is never lost
-    with out_path.open("a", encoding="utf-8") as f:
-        for inst in tqdm(remaining, desc="Task1"):
-            result = _process_one(inst)
-            f.write(json.dumps(result, ensure_ascii=False) + "\n")
-            f.flush()
+    # Process one ID at a time, runs_per_id times each; append immediately so progress is never lost
+    with out_path.open("a", encoding="utf-8") as f, tqdm(total=total_to_do, desc="Task1") as pbar:
+        for inst in instances:
+            for run_idx in range(1, runs_per_id + 1):
+                if (inst.review_id, run_idx) in processed_run_keys:
+                    continue
+                result = _process_one(inst)
+                result["run_index"] = run_idx
+                f.write(json.dumps(result, ensure_ascii=False) + "\n")
+                f.flush()
+                pbar.update(1)
 
-    # Read all results (existing + new) in original dataset order, then write CSV
+    # Read all results (existing + new) sorted by (id_order, run_index), then write CSV
     id_order = {inst.review_id: i for i, inst in enumerate(instances)}
     all_results: list[dict[str, Any]] = []
     with out_path.open(encoding="utf-8") as f:
@@ -379,7 +390,7 @@ def run_task1(
                 all_results.append(json.loads(line))
             except json.JSONDecodeError:
                 pass
-    all_results.sort(key=lambda r: id_order.get(str(r.get("review_id", "")), 999999))
+    all_results.sort(key=lambda r: (id_order.get(str(r.get("review_id", "")), 999999), int(r.get("run_index", 1))))
 
     csv_path = out_path.with_suffix(".csv")
     _write_readable_csv(csv_path, all_results, instances, output_schema=output_schema)
@@ -397,22 +408,24 @@ def _write_readable_csv(csv_path: Path, results: list[dict[str, Any]], instances
         writer = csv_mod.writer(f)
 
         if output_schema == "topic_only":
-            writer.writerow(["Review ID", "Valid", "Topics Present", "Errors"])
+            writer.writerow(["Review ID", "Run", "Valid", "Topics Present", "Errors"])
             for r in results:
                 review_id = r["review_id"]
+                run_idx = r.get("run_index", 1)
                 valid = r["valid"]
                 errors = "; ".join(r.get("errors", []))
                 parsed = r.get("parsed")
                 if parsed and "Topics" in parsed:
                     present = [t for t, v in parsed["Topics"].items() if v]
                     topics_str = ", ".join(present) if present else "(none)"
-                    writer.writerow([review_id, valid, topics_str, errors])
+                    writer.writerow([review_id, run_idx, valid, topics_str, errors])
                 else:
-                    writer.writerow([review_id, valid, "(parse failed)", errors])
+                    writer.writerow([review_id, run_idx, valid, "(parse failed)", errors])
         elif output_schema == "span_only":
-            writer.writerow(["Review ID", "Valid", "Topic", "Text Span", "Errors"])
+            writer.writerow(["Review ID", "Run", "Valid", "Topic", "Text Span", "Errors"])
             for r in results:
                 review_id = r["review_id"]
+                run_idx = r.get("run_index", 1)
                 valid = r["valid"]
                 errors = "; ".join(r.get("errors", []))
                 parsed = r.get("parsed")
@@ -428,15 +441,16 @@ def _write_readable_csv(csv_path: Path, results: list[dict[str, Any]], instances
                             if not text or text == "null":
                                 continue
                             found_any = True
-                            writer.writerow([review_id, valid, topic, text, ""])
+                            writer.writerow([review_id, run_idx, valid, topic, text, ""])
                     if not found_any:
-                        writer.writerow([review_id, valid, "(no spans found)", "", errors])
+                        writer.writerow([review_id, run_idx, valid, "(no spans found)", "", errors])
                 else:
-                    writer.writerow([review_id, valid, "(parse failed)", "", errors])
+                    writer.writerow([review_id, run_idx, valid, "(parse failed)", "", errors])
         elif output_schema == "sentiment_only":
-            writer.writerow(["Review ID", "Valid", "Topic", "Sentiment", "Errors"])
+            writer.writerow(["Review ID", "Run", "Valid", "Topic", "Sentiment", "Errors"])
             for r in results:
                 review_id = r["review_id"]
+                run_idx = r.get("run_index", 1)
                 valid = r["valid"]
                 errors = "; ".join(r.get("errors", []))
                 parsed = r.get("parsed")
@@ -445,15 +459,16 @@ def _write_readable_csv(csv_path: Path, results: list[dict[str, Any]], instances
                     for topic, label in parsed["Topics"].items():
                         if label is not None:
                             found_any = True
-                            writer.writerow([review_id, valid, topic, label, ""])
+                            writer.writerow([review_id, run_idx, valid, topic, label, ""])
                     if not found_any:
-                        writer.writerow([review_id, valid, "(no sentiments found)", "", errors])
+                        writer.writerow([review_id, run_idx, valid, "(no sentiments found)", "", errors])
                 else:
-                    writer.writerow([review_id, valid, "(parse failed)", "", errors])
+                    writer.writerow([review_id, run_idx, valid, "(parse failed)", "", errors])
         else:  # full
-            writer.writerow(["Review ID", "Valid", "Topic", "Text Span", "Sentiment", "Errors"])
+            writer.writerow(["Review ID", "Run", "Valid", "Topic", "Text Span", "Sentiment", "Errors"])
             for r in results:
                 review_id = r["review_id"]
+                run_idx = r.get("run_index", 1)
                 valid = r["valid"]
                 errors = "; ".join(r.get("errors", []))
                 parsed = r.get("parsed")
@@ -470,9 +485,9 @@ def _write_readable_csv(csv_path: Path, results: list[dict[str, Any]], instances
                             if not text or text == "null":
                                 continue
                             found_any = True
-                            writer.writerow([review_id, valid, topic, text, label or "", ""])
+                            writer.writerow([review_id, run_idx, valid, topic, text, label or "", ""])
                     if not found_any:
-                        writer.writerow([review_id, valid, "(no topics found)", "", "", errors])
+                        writer.writerow([review_id, run_idx, valid, "(no topics found)", "", "", errors])
                 else:
-                    writer.writerow([review_id, valid, "(parse failed)", "", "", errors])
+                    writer.writerow([review_id, run_idx, valid, "(parse failed)", "", "", errors])
 

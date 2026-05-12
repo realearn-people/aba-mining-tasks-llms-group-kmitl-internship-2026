@@ -51,6 +51,7 @@ Examples:
     parser.add_argument("--n", type=int, default=None, help="Limit number of IDs (default: whole dataset). Use --n 5 for quick testing.")
     parser.add_argument("--run", type=int, default=None, help="Run number for folder naming, e.g. 1, 2, 3")
     parser.add_argument("--model", default=None, help="Override model from model.yaml, e.g. --model llama4:scout")
+    parser.add_argument("--runs", type=int, default=3, help="Number of times to call the LLM per ID (default: 3).")
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parent
@@ -94,8 +95,9 @@ Examples:
     print(f"Schema     : {output_schema}")
     print(f"Description: {description}")
     print(f"Dataset    : {'all IDs' if args.n is None else f'first {args.n} IDs (test mode)'}")
+    print(f"Runs/ID    : {args.runs}")
     if run_label:
-        print(f"Run        : {run_label}")
+        print(f"Run label  : {run_label}")
     print("=" * 60)
 
     out_path = run_task1(
@@ -109,6 +111,7 @@ Examples:
         output_subdir=output_subdir,
         output_label=args.experiment,
         output_schema=output_schema,
+        runs_per_id=args.runs,
     )
     print(f"Wrote: {out_path}")
     print("\nDone.")

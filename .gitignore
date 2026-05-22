@@ -1,1 +1,33 @@
 .claude
+claude.md
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project outputs & logs
+outputs/
+*.log
+.ipynb_checkpoints/
+
+run_experiments_3x.sh
+run_all_experiments.sh
+s -ExecutionPolicy RemoteSigned) ; (& duserABA_Mining.venvScriptsActivate.ps1)

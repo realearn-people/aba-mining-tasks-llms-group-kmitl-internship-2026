@@ -9,10 +9,49 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 
-from internship.ABA_mining.src import load_model_config, load_paths_config, load_topics_config
-from internship.ABA_mining.src import build_client
-from internship.ABA_mining.src import run_task1
-from internship.ABA_mining.src.prompts import build_modular_prompt
+from src import load_model_config, load_paths_config, load_topics_config
+from src import build_client
+from src import run_task1
+from src.prompts import build_modular_prompt
+from src.task1 import load_task1_instances_from_input, run_task1_sequence
+
+
+class _FastOllamaClient:
+    """Ollama client that disables 'thinking' output.
+
+    Reasoning-capable models (Qwen3.x, Gemma thinking variants, DeepSeek-R1,
+    gpt-oss, ...) silently spend hundreds of extra tokens on a hidden
+    chain-of-thought before the JSON answer even starts. Passing think=False
+    skips that.
+    """
+
+    def __init__(self, options: dict) -> None:
+        import ollama
+
+        self._ollama = ollama
+        self._options = dict(options or {})
+        self._think_supported = True
+
+    def complete(self, *, model: str, prompt: str, temperature: float, top_p: float, max_output_tokens: int):
+        from src.llm import LLMResponse
+
+        options = dict(self._options)
+        options.setdefault("temperature", temperature)
+        options.setdefault("top_p", top_p)
+        options.setdefault("num_predict", max_output_tokens)
+
+        if self._think_supported:
+            try:
+                resp = self._ollama.generate(
+                    model=model, prompt=prompt, stream=False, think=False, options=options,
+                )
+                return LLMResponse(text=(resp.get("response") or "").strip())
+            except TypeError:
+                # Installed ollama-python client predates the `think` kwarg — disable for the rest of the run.
+                self._think_supported = False
+
+        resp = self._ollama.generate(model=model, prompt=prompt, stream=False, options=options)
+        return LLMResponse(text=(resp.get("response") or "").strip())
 
 
 def _load_experiments(repo_root: Path) -> dict:
@@ -33,6 +72,7 @@ Examples:
   python3 run_task1.py --experiment subtask1_1      # rules 2,5,6 — topic only
   python3 run_task1.py --experiment subtask1_2      # rules 1,7   — span only
   python3 run_task1.py --experiment subtask1_3      # rules 3,4   — sentiment only
+  python3 run_task1.py --experiment sequence        # 1.1 -> 1.2 -> 1.3 chained, combined CSV columns
 
   # Label the run (for comparing run 1 vs run 2)
   python3 run_task1.py --experiment combined --run 1
@@ -70,7 +110,10 @@ Examples:
     if args.model:
         model_cfg = replace(model_cfg, task1_model=args.model, validator_model=args.model)
 
-    client = build_client(model_cfg.provider, ollama_options=model_cfg.ollama_options)
+    if model_cfg.provider.lower().strip() == "ollama":
+        client = _FastOllamaClient(options=model_cfg.ollama_options)
+    else:
+        client = build_client(model_cfg.provider, ollama_options=model_cfg.ollama_options)
 
     # ── Load experiment ───────────────────────────────────────────────────────
     experiments = _load_experiments(repo_root)
@@ -79,13 +122,25 @@ Examples:
         parser.error(f"Unknown experiment '{args.experiment}'. Available: {available}")
 
     exp = experiments[args.experiment]
-    rule_list = [int(r) for r in exp["rules"]]
     output_schema = exp["output_schema"]
     description = exp.get("description", "")
+    steps = exp.get("steps")  # only the "sequence" experiment has steps
 
-    # ── Assemble prompt from rule files ───────────────────────────────────────
-    # Combines header + rule2.txt + rule5.txt + rule6.txt + footer (for subtask1_1 example)
-    prompt_template = build_modular_prompt(repo_root, rule_list, output_schema)
+    def _step_prompt(name: str) -> str:
+        step = experiments[name]
+        # Combines header + rule files + footer (e.g. rule2.txt + rule5.txt + rule6.txt for subtask1_1)
+        return build_modular_prompt(repo_root, [int(r) for r in step["rules"]], step["output_schema"])
+
+    if steps:
+        topics_step, spans_step, sentiments_step = steps
+        topics_template = _step_prompt(topics_step)
+        spans_template = _step_prompt(spans_step)
+        sentiments_template = _step_prompt(sentiments_step)
+        rules_desc = " -> ".join(f"{name} {experiments[name]['rules']}" for name in steps)
+    else:
+        # ── Assemble prompt from rule files ───────────────────────────────────
+        prompt_template = _step_prompt(args.experiment)
+        rules_desc = str(exp["rules"])
 
     # ── Build output folder: model/modular/experiment/versionX ───────────────
     model_folder = model_cfg.task1_model.replace(":", "_").replace("/", "_").replace("-", "_")
@@ -93,7 +148,7 @@ Examples:
     print("\n" + "=" * 60)
     print(f"Model      : {model_cfg.task1_model}")
     print(f"Experiment : {args.experiment}")
-    print(f"Rules      : {rule_list}")
+    print(f"Rules      : {rules_desc}")
     print(f"Schema     : {output_schema}")
     print(f"Description: {description}")
     print(f"Dataset    : {'all IDs' if args.n is None else f'first {args.n} IDs (test mode)'}")
@@ -109,19 +164,42 @@ Examples:
 
         print(f"[{run_num}/{args.num_versions}] Running {args.experiment} - {run_label}...")
 
-        out_path = run_task1(
-            repo_root=repo_root,
-            client=client,
-            topics_cfg=topics_cfg,
-            model_cfg=model_cfg,
-            paths_cfg=paths_cfg,
-            limit_reviews=args.n,
-            prompt_template=prompt_template,
-            output_subdir=output_subdir,
-            output_label=f"{args.experiment}_{run_label}",
-            output_schema=output_schema,
-            runs_per_id=args.runs,
-        )
+        if steps:
+            # Final result goes to modular/sequence/; each step's own answers go to its subtask
+            # folder under a "sequence_" name, so they never mix with standalone subtask runs.
+            model_name = model_cfg.task1_model.replace(":", "_").replace("/", "_")
+
+            def _jsonl_path(folder: str, label: str) -> Path:
+                out_dir = paths_cfg.task1_dir / model_folder / "modular" / folder
+                out_dir.mkdir(parents=True, exist_ok=True)
+                return out_dir / f"task1_{model_name}_{topics_cfg.active_schema}_{label}_{run_label}.jsonl"
+
+            out_path = run_task1_sequence(
+                client=client,
+                topics_cfg=topics_cfg,
+                model_cfg=model_cfg,
+                instances=load_task1_instances_from_input(paths_cfg, limit_reviews=args.n),
+                topics_template=topics_template,
+                spans_template=spans_template,
+                sentiments_template=sentiments_template,
+                out_jsonl=_jsonl_path(args.experiment, args.experiment),
+                step_jsonls={name: _jsonl_path(name, f"{args.experiment}_{name}") for name in steps},
+                runs_per_id=args.runs,
+            )
+        else:
+            out_path = run_task1(
+                repo_root=repo_root,
+                client=client,
+                topics_cfg=topics_cfg,
+                model_cfg=model_cfg,
+                paths_cfg=paths_cfg,
+                limit_reviews=args.n,
+                prompt_template=prompt_template,
+                output_subdir=output_subdir,
+                output_label=f"{args.experiment}_{run_label}",
+                output_schema=output_schema,
+                runs_per_id=args.runs,
+            )
         output_paths.append(out_path)
         print(f"  → Wrote: {out_path}\n")
 

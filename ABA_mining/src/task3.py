@@ -117,6 +117,12 @@ def _detect_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
 
 
 def aspect_from_filename(path: Path) -> str:
+    # task3_csv_prepare.py names files "<Topic> - <Category>.csv" (e.g. "Food - Contrary(N)Body(P).csv",
+    # "Booking-issue - Contrary(P)Body(N).csv") -> aspect is the lowercased topic part.
+    if " - " in path.stem:
+        topic = path.stem.split(" - ", 1)[0].strip()
+        if topic:
+            return re.sub(r"\s+", "-", topic.lower())
     lower = path.name.lower()
     if "check-out" in lower or "checkout" in lower:
         return "check-out"
@@ -129,6 +135,16 @@ def aspect_from_filename(path: Path) -> str:
     if "facility" in lower:
         return "facility"
     return path.stem[:40]
+
+
+def category_from_filename(path: Path) -> str:
+    """Polarity category named in a CSV filename (e.g. "Food - Contrary(N)Body(P).csv").
+    Legacy per-aspect CSVs without a category in the name were always Contrary(P)Body(N)."""
+    lower = path.name.lower()
+    for category in ALL_CATEGORIES:
+        if category.lower() in lower:
+            return category
+    return "Contrary(P)Body(N)"
 
 
 def safe_file_token(value: str) -> str:
@@ -162,7 +178,6 @@ def _extract_rows(
     work = work.rename(columns=rename_map)
     if "Vote" not in work.columns:
         work["Vote"] = ""
-    work["Vote"] = work["Vote"].fillna("")  # unvoted sheets read back as NaN
 
     work = work.dropna(subset=["ID", "PhraseA", "PhraseB"])
     work["PhraseA"] = work["PhraseA"].astype(str).str.strip()
@@ -189,7 +204,6 @@ def load_task3_instances(
     categories: list[str] | None = None,
     max_per_group: int | None = DEFAULT_MAX_PER_GROUP,
     seed: int = 42,
-    skip_incomplete: bool = True,
 ) -> list[Task3Instance]:
     """Load Phrase A / Phrase B pairs + gold Vote from the Task 3 gold data.
 
@@ -200,9 +214,7 @@ def load_task3_instances(
       (Contrary(P)Body(N), Contrary(N)Body(P), Contrary(P)Body(P), Contrary(N)Body(N)).
 
     Any (aspect, category) pair listed in INCOMPLETE_ASPECT_CATEGORIES is skipped regardless
-    of `categories` — those sheets exist but don't have finished human votes yet. Pass
-    skip_incomplete=False when loading pair sets that are unvoted on purpose (the LLM-only
-    pair sets from build_task3_llm_pairs.py), where there is nothing to evaluate against.
+    of `categories` — those sheets exist but don't have finished human votes yet.
 
     `max_per_group` randomly samples down any (aspect, category) group larger than this
     (fixed `seed` for reproducibility) — some categories run into the tens of thousands of
@@ -211,17 +223,22 @@ def load_task3_instances(
     wanted_categories = categories if categories is not None else ALL_CATEGORIES
     instances: list[Task3Instance] = []
 
+    if aspects:
+        aspects = [a.lower() for a in aspects]
+
+    # One CSV per (aspect, category): "<Topic> - <Category>.csv" from task3_csv_prepare.py.
+    # These are unvoted candidate pairs, so INCOMPLETE_ASPECT_CATEGORIES (which tracks human
+    # voting progress in the xlsx workbooks) doesn't apply here.
     for csv_path in sorted(task3_dir.glob("*.csv")):
         aspect = aspect_from_filename(csv_path)
+        category = category_from_filename(csv_path)
         if aspects and aspect not in aspects:
             continue
-        if "Contrary(P)Body(N)" not in wanted_categories:
-            continue
-        if skip_incomplete and (aspect, "Contrary(P)Body(N)") in INCOMPLETE_ASPECT_CATEGORIES:
+        if category not in wanted_categories:
             continue
 
         df = pd.read_csv(csv_path, dtype=str)
-        instances.extend(_extract_rows(df, "Contrary(P)Body(N)", aspect, csv_path.name))
+        instances.extend(_extract_rows(df, category, aspect, csv_path.name))
 
     # Multiple xlsx workbooks can match the same aspect (e.g. a "(Gold)" workbook superseding
     # an older "(Silver)" one once voting finishes) -- load exactly ONE per aspect, never both,
@@ -253,13 +270,12 @@ def load_task3_instances(
         for category in wanted_categories:
             if category not in xl.sheet_names:
                 continue
-            if skip_incomplete and (aspect, category) in INCOMPLETE_ASPECT_CATEGORIES:
+            if (aspect, category) in INCOMPLETE_ASPECT_CATEGORIES:
                 continue
             df = pd.read_excel(xl, sheet_name=category, dtype=str)
             instances.extend(_extract_rows(df, category, aspect, f"{xlsx_path.name}::{category}"))
 
     if max_per_group:
-        rng = random.Random(seed)
         grouped: dict[tuple[str, str], list[Task3Instance]] = {}
         for inst in instances:
             grouped.setdefault((inst.aspect, inst.category), []).append(inst)
@@ -267,6 +283,9 @@ def load_task3_instances(
         capped: list[Task3Instance] = []
         for (aspect, category), group in grouped.items():
             if len(group) > max_per_group:
+                # Seeded per group so a group's sample doesn't depend on which other groups were
+                # loaded (--aspects / --categories) -- keeps resume/skip matching across runs.
+                rng = random.Random(f"{seed}|{aspect}|{category}")
                 group = rng.sample(group, max_per_group)
             capped.extend(group)
         instances = capped
@@ -430,9 +449,18 @@ def run_task3(
             todo_mask = ~(df_input["ID"] + "||" + df_input["PhraseA"] + "||" + df_input["PhraseB"]).isin(done_keys)
             todo = df_input[todo_mask]
 
+            if resume and run_csv.exists() and not len(todo):
+                # Already fully processed for this run -- leave its csv/log untouched, just refresh
+                # the wide sheet so the ALL_sheets workbook still includes this category.
+                print(f"[task3] skip {aspect} / {category} run{run_idx}: "
+                      f"{run_csv.name} already has all {len(df_input)} pair(s)")
+                wide = _build_master_wide(df_input, csv_dir, run_base, n_runs)
+                wide.to_excel(sheet_dir / f"{run_base}_sheet.xlsx", index=False)
+                category_wide[category] = wide
+                continue
+
             if len(todo):
-                ex = ThreadPoolExecutor(max_workers=model_cfg.num_workers)
-                try:
+                with ThreadPoolExecutor(max_workers=model_cfg.num_workers) as ex:
                     futs = {ex.submit(_predict_one, row["Prompt"]): row for _, row in todo.iterrows()}
 
                     for fut in tqdm(as_completed(futs), total=len(futs),
@@ -451,12 +479,6 @@ def run_task3(
                             "PhraseA": row["PhraseA"], "PhraseB": row["PhraseB"],
                             "Prompt": row["Prompt"], "RawOutput": result["raw_output"],
                         })
-                finally:
-                    # When a request fails, the loop above stops recording answers — so drop the
-                    # queued requests instead of waiting for them (a `with` block would sit
-                    # through every one, tens of thousands against a dead model server, before
-                    # the error surfaces and a resume can start). Finished pairs are on disk.
-                    ex.shutdown(wait=False, cancel_futures=True)
 
             if run_csv.exists():
                 # Tidy pass: dedupe defensively and reorder to match df_input's gold-file order —
@@ -480,19 +502,9 @@ def run_task3(
             wide.to_excel(sheet_xlsx, index=False)
             category_wide[category] = wide
 
-        sheets = {category[:31]: wide for category, wide in category_wide.items()}
-        # A run restricted with --categories only rebuilt some of this aspect's categories —
-        # carry the other sheets over from the existing workbook instead of wiping them.
-        if aspect_all_sheets.exists():
-            try:
-                existing = pd.read_excel(aspect_all_sheets, sheet_name=None, dtype=str)
-            except Exception:  # noqa: BLE001 — unreadable workbook: rebuild from this run alone
-                existing = {}
-            for sheet_name, old in existing.items():
-                sheets.setdefault(sheet_name, old)
         with pd.ExcelWriter(aspect_all_sheets, engine="openpyxl") as writer:
-            for sheet_name in sorted(sheets):
-                sheets[sheet_name].to_excel(writer, sheet_name=sheet_name, index=False)
+            for category, wide in category_wide.items():
+                wide.to_excel(writer, sheet_name=category[:31], index=False)
         written[aspect] = aspect_all_sheets
 
     return written

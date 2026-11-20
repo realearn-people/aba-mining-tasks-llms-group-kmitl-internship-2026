@@ -24,4 +24,3 @@ __all__ = [
     "load_task3_instances",
     "run_task3",
 ]
-

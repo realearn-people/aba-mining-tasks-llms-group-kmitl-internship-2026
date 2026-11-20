@@ -85,4 +85,3 @@ def load_paths_config(repo_root: Path) -> PathsConfig:
         task1_dir=(repo_root / out["task1_dir"]).resolve(),
         eval_dir=(repo_root / out["eval_dir"]).resolve(),
     )
-

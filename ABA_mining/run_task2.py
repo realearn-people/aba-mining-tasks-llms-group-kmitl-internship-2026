@@ -15,7 +15,7 @@ for path in (REPO_ROOT, WORKSPACE_ROOT):
 
 from dotenv import load_dotenv
 
-from internship.ABA_mining.src import (
+from src import (
     build_client,
     load_model_config,
     load_paths_config,
@@ -23,6 +23,45 @@ from internship.ABA_mining.src import (
     load_task2_instances_llm,
     run_task2,
 )
+
+
+class _FastOllamaClient:
+    """Ollama client that disables 'thinking' output.
+
+    Reasoning-capable models (Qwen3.x, Gemma thinking variants, DeepSeek-R1,
+    gpt-oss, ...) silently spend hundreds of extra tokens on a hidden
+    chain-of-thought before the JSON answer even starts. Llama has no
+    thinking mode, which is why it's the only model that runs fast here —
+    passing think=False puts the other models on equal footing.
+    """
+
+    def __init__(self, options: dict) -> None:
+        import ollama
+
+        self._ollama = ollama
+        self._options = dict(options or {})
+        self._think_supported = True
+
+    def complete(self, *, model: str, prompt: str, temperature: float, top_p: float, max_output_tokens: int):
+        from src.llm import LLMResponse
+
+        options = dict(self._options)
+        options.setdefault("temperature", temperature)
+        options.setdefault("top_p", top_p)
+        options.setdefault("num_predict", max_output_tokens)
+
+        if self._think_supported:
+            try:
+                resp = self._ollama.generate(
+                    model=model, prompt=prompt, stream=False, think=False, options=options,
+                )
+                return LLMResponse(text=(resp.get("response") or "").strip())
+            except TypeError:
+                # Installed ollama-python client predates the `think` kwarg (<0.4) — disable for the rest of the run.
+                self._think_supported = False
+
+        resp = self._ollama.generate(model=model, prompt=prompt, stream=False, options=options)
+        return LLMResponse(text=(resp.get("response") or "").strip())
 
 
 def main() -> None:
@@ -35,6 +74,14 @@ Examples:
   python run_task2.py --model llama4:scout      # run with llama4_scout on server
   python run_task2.py --model llama3.2 --n 20   # quick test with 20 instances
   python run_task2.py --model llama3.2 --num-versions 3  # run 3 versions automatically
+  python run_task2.py --model llama3.2 --all-prompts     # run every prompts/task2/generator_v*.txt
+
+Checkpointing:
+  Each run writes its .jsonl row-by-row and fsyncs after every row. If the
+  job is killed (e.g. SLURM time limit) and this script is resubmitted with
+  the same arguments, already-finished versions are detected and skipped,
+  and a partially-finished version resumes from its last completed row
+  instead of starting over.
         """,
     )
     parser.add_argument("model_name", nargs="?", default=None,
@@ -52,6 +99,8 @@ Examples:
                              "Sentiment and Text Span / Selected Content columns)")
     parser.add_argument("--num-versions", type=int, default=1,
                         help="Number of versions to run (default: 1). Use --num-versions 3 for 3 versions.")
+    parser.add_argument("--all-prompts", action="store_true",
+                        help="Run every prompt template in prompts/task2/ (generator_v*.txt) instead of just --prompt.")
     args = parser.parse_args()
 
     repo_root = REPO_ROOT
@@ -67,9 +116,21 @@ Examples:
     if model_override:
         model_cfg = replace(model_cfg, task1_model=model_override, validator_model=model_override)
 
-    client = build_client(model_cfg.provider, ollama_options=model_cfg.ollama_options)
+    if model_cfg.provider.lower().strip() == "ollama":
+        client = _FastOllamaClient(options=model_cfg.ollama_options)
+    else:
+        client = build_client(model_cfg.provider, ollama_options=model_cfg.ollama_options)
     model_folder = model_cfg.task1_model.replace(":", "_").replace("/", "_").replace("-", "_")
-    prompt_label = Path(args.prompt).stem  # e.g. generator_v1
+
+    if args.all_prompts:
+        prompt_paths = sorted(
+            (repo_root / "prompts" / "task2").glob("generator_v*.txt"),
+            key=lambda p: int(p.stem.replace("generator_v", "")),
+        )
+        if not prompt_paths:
+            parser.error("--all-prompts was set but no prompts/task2/generator_v*.txt files were found")
+    else:
+        prompt_paths = [Path(args.prompt)]
 
     print("\n" + "=" * 60)
     print(f"Task 2 — Body Literal Generation")
@@ -92,15 +153,15 @@ Examples:
         instances = load_task2_instances_gt(paths_cfg.gold_csv, limit=args.n, offset=args.offset)
     print(f"Loaded {len(instances)} {source.upper()} instances\n")
 
-    # Extract version number from prompt file (e.g., generator_v1 → version1)
-    version_match = prompt_label.replace("generator_", "")  # e.g., "v1" → "v1"
-    version_folder = f"version{version_match[1]}" if version_match.startswith("v") else "version1"  # v1 → version1
+        # Extract version number from prompt file (e.g., generator_v1 → version1)
+        version_match = prompt_label.replace("generator_", "")  # e.g., "v1" → "v1"
+        version_folder = f"version{version_match[1]}" if version_match.startswith("v") else "version1"  # v1 → version1
 
-    output_paths = []
+        output_paths = []
 
-    for run_num in range(1, args.num_versions + 1):
-        run_label = f"run{run_num}"
-        print(f"[{run_num}/{args.num_versions}] Running Task 2 [{version_folder}] - {run_label}...\n")
+        for run_num in range(1, args.num_versions + 1):
+            run_label = f"run{run_num}"
+            print(f"[{version_folder} {run_num}/{args.num_versions}] Running Task 2 [{version_folder}] - {run_label}...\n")
 
         # The input file goes into the label so the output records which Task 1 run fed it.
         label = f"{model_folder}_{prompt_label}_{run_label}"
@@ -120,10 +181,14 @@ Examples:
         output_paths.append(out_path)
         print(f"  → Wrote: {out_path}\n")
 
+        all_output_paths[version_folder] = output_paths
+
     print("=" * 60)
-    print(f"All {args.num_versions} run(s) completed in {version_folder}:")
-    for i, path in enumerate(output_paths, 1):
-        print(f"  run{i}: {path}")
+    print(f"All prompt version(s) completed:")
+    for version_folder, output_paths in all_output_paths.items():
+        print(f"  {version_folder}:")
+        for i, path in enumerate(output_paths, 1):
+            print(f"    run{i}: {path}")
     print("=" * 60)
 
 

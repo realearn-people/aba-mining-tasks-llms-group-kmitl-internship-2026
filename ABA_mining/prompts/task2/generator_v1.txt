@@ -1,16 +1,10 @@
 You are an expert in hotel review analysis following official ABA (Aspect-Body-Contrary) annotation rules.
 
-TASK: Given topic, sentiment, and text span from a review, generate TWO components: Head (category) and Body (structured phrase).
+TASK: Given topic, sentiment, and text span from a review, generate the structured body literals only.
 
 TOPIC: {{TOPIC}}
 SENTIMENT: {{SENTIMENT}}
 TEXT SPAN: "{{SELECTED_CONTENT}}"
-
-HEAD GENERATION (Deterministic):
-- Format: [sentiment_direction]_[topic_lowercase]
-- If Sentiment = Positive: head starts with "good_"
-- If Sentiment = Negative: head starts with "bad_"
-- Examples: good_room, bad_staff, good_location, bad_facility
 
 BODY GENERATION (Follows Body Decision Log rules):
 
@@ -26,7 +20,7 @@ OFFICIAL BODY DECISION LOG RULES (Apply in order, strictly):
    Example: "a nice room" → nice_room
 6. Convert to lowercase
 7. Replace spaces with underscores
-8. Use ONLY words from original text (NO synonyms, NO external words)
+8. Use ONLY words from original text (NO synonyms, NO external words), except for the required topic noun mapping in Rule 16.
 9. Keep phrases SHORT — one noun + one key adjective/verb (unless meanings require split)
 10. Correct obvious typos only (else mark as inappropriate)
 11. Match sentiment — extract features matching the given sentiment only
@@ -41,9 +35,12 @@ OFFICIAL BODY DECISION LOG RULES (Apply in order, strictly):
     b) "-er comparatives" → "[noun]_could_be_[adjective]" — Example: "pool could be bigger" → pool_could_be_bigger
     c) "couldn't have been more X" → "[X]_[topic]" — Example: "couldn't have been more helpful" → helpful_staff
 16. TOPIC-SPECIFIC conversions:
-    - Room: "clean" → clean_room; use _room suffix
-    - Facility: {apartment, hotel, accommodation, place, building, atmosphere, property} → _hotel
-    - Staff: {people, receptionist, housekeeper, owner, host, gentleman, lady} → _staff
+    - Room: If the phrase is a standalone adjective or quality about a room, add _room.
+      Example: "clean" → clean_room
+    - Facility: If the phrase contains any of {apartment, apartments, hotel, accommodation, accommodations, place, building, atmosphere, property}, replace that word with hotel in the final literal.
+      Examples: "new apartments" → new_hotel, "comfortable accommodation" → comfortable_hotel
+    - Staff: If the phrase contains any of {people, receptionist, housekeeper, owner, host, gentleman, lady}, replace that word with staff in the final literal.
+      Examples: "helpful receptionist" → helpful_staff, "friendly people" → friendly_staff
     - Location: Noise outside (street, beach, bars) → Location; Noise inside (walls, AC) → Room
 17. If body duplicates head, use Contrary (opposite) instead
 18. Prefer active voice
@@ -58,32 +55,35 @@ FULL EXAMPLES:
 
 Example 1 — Positive, Staff:
 Text: "Staff is extremely helpful and easy to communicate with"
-Output: {"head": "good_staff", "body_literals": ["helpful_staff", "easy_to_communicate_with"]}
+Output: {"body_literals": ["helpful_staff", "easy_to_communicate_with"]}
 
 Example 2 — Positive, Room:
 Text: "The room was very clean and well decorated, modern"
-Output: {"head": "good_room", "body_literals": ["clean_room", "well_decorated_room", "modern_room"]}
+Output: {"body_literals": ["clean_room", "well_decorated_room", "modern_room"]}
 
 Example 3 — Negative, Food:
 Text: "The breakfast was cold and the portions were too small"
-Output: {"head": "bad_food", "body_literals": ["cold_breakfast", "small_portions"]}
+Output: {"body_literals": ["cold_breakfast", "small_portions"]}
 
-Example 4 — Positive, Location:
+Example 4 — Positive, Facility:
+Text: "New, comfortable apartments"
+Output: {"body_literals": ["new_hotel", "comfortable_hotel"]}
+
+Example 5 — Positive, Location:
 Text: "close to the airport and to a very clean beach"
-Output: {"head": "good_location", "body_literals": ["close_to_airport", "clean_beach"]}
+Output: {"body_literals": ["close_to_airport", "clean_beach"]}
 
-Example 5 — Negative with indirect meaning:
+Example 6 — Negative with indirect meaning:
 Text: "It would be nice to have more TV channels"
-Output: {"head": "bad_location", "body_literals": ["no_more_tv_channel"]}
+Output: {"body_literals": ["no_more_tv_channel"]}
 
 OUTPUT FORMAT:
 Output ONLY a single JSON object. No explanation. No markdown. No backticks.
-{"head": "good_room", "body_literals": ["literal_1", "literal_2", ...]}
+{"body_literals": ["literal_1", "literal_2", ...]}
 
-- "head": The category (format: [sentiment_direction]_[topic_lowercase])
 - "body_literals": Array of structured phrases following Body Decision Log rules
 
-If nothing can be extracted, output: {"head": "good_room", "body_literals": []}
+If nothing can be extracted, output: {"body_literals": []}
 
 NOW PROCESS:
 Topic: {{TOPIC}}
